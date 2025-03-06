@@ -31,7 +31,7 @@ namespace AzureOpenAIStreamingDemo
                 new UserChatMessage(customPrompt)
             };
 
-            Console.WriteLine("Starting to receive streaming response from Azure OpenAI...\n");
+            Console.WriteLine("\nStarting to receive streaming response from Azure OpenAI...\n");
 
             // Create JSON stream parser
             await using var jsonParser = new JsonStreamParser();
@@ -84,18 +84,18 @@ namespace AzureOpenAIStreamingDemo
                     case JsonStringValueEvent stringEvent:
                         if (stringEvent.PropertyName != lastStringPropertyName)
                         {
-                            Console.WriteLine($"\nString value for property {stringEvent.PropertyName}: ");
+                            Console.WriteLine($"\nString value for property \"{stringEvent.PropertyName}\": ");
                             lastStringPropertyName = stringEvent.PropertyName;
                         }
                         Console.Write(stringEvent.Chunk);
                         if (stringEvent.IsFinal)
                         {
-                            Console.WriteLine($"\nCompleted string value for property: {stringEvent.PropertyName}");
+                            Console.WriteLine($"\nCompleted string value for property: \"{stringEvent.PropertyName}\"");
                         }
                         break;
                     
                     case JsonComplexValueEvent complexEvent:
-                        Console.WriteLine($"\nComplex {(complexEvent.IsObject ? "object" : "array")} for property {complexEvent.PropertyName}: {complexEvent.Value}...");
+                        Console.WriteLine($"\nComplex {(complexEvent.IsObject ? "object" : "array")} for property \"{complexEvent.PropertyName}\": {complexEvent.Value}");
                         break;
                     
                     case JsonPrimitiveValueEvent primitiveEvent:
