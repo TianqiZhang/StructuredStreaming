@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using StructuredStreaming.Core;
 
@@ -10,27 +9,21 @@ namespace StructuredStreaming.Tests
     [TestClass]
     public class JsonStreamParserTests
     {
-        // Helper method to collect events from parser
-        private async Task<List<JsonStreamEvent>> CollectEventsAsync(Func<JsonStreamParser, Task> processAction)
+        // Helper method to collect events from parser using an array of string chunks
+        private List<JsonStreamEvent> CollectEvents(params string[] chunks)
         {
             var events = new List<JsonStreamEvent>();
             
-            await using (var parser = new JsonStreamParser())
+            using (var parser = new JsonStreamParser())
             {
-                // Start collecting events in a separate task
-                var collectTask = Task.Run(async () => {
-                    await foreach (var evt in parser.GetEventsAsync())
-                    {
-                        events.Add(evt);
-                    }
-                });
+                // Process each chunk
+                foreach (var chunk in chunks)
+                {
+                    events.AddRange(parser.ProcessChunk(chunk));
+                }
                 
-                // Process the input
-                await processAction(parser);
-                
-                // Complete parsing and wait for event collection
-                await parser.CompleteAsync();
-                await collectTask;
+                // Complete parsing and collect final events
+                events.AddRange(parser.Complete());
             }
             
             return events;
@@ -84,12 +77,9 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestSimpleJsonParsing()
+        public void TestSimpleJsonParsing()
         {
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync("{\"name\":\"John\"}");
-            });
+            var events = CollectEvents("{\"name\":\"John\"}");
 
             // Verify valid JSON structure
             VerifyValidJson(events);
@@ -100,13 +90,12 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestPartialJsonParsing()
+        public void TestPartialJsonParsing()
         {
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync("{\"name\":");
-                await parser.ProcessChunkAsync("\"John\"}");
-            });
+            var events = CollectEvents(
+                "{\"name\":", 
+                "\"John\"}"
+            );
 
             // Verify valid JSON structure
             VerifyValidJson(events);
@@ -117,17 +106,16 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestComplexJsonParsing()
+        public void TestComplexJsonParsing()
         {
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync("{\"person\":{\"name\":\"John\",\"age\":30},");
-                await parser.ProcessChunkAsync("\"characters\":[{\"name\":\"Alice\",\"age\":25},{\"name\":\"Bob\",\"age\":35}],");
-                await parser.ProcessChunkAsync("\"story\":\"");
-                await parser.ProcessChunkAsync("Once upon a time");
-                await parser.ProcessChunkAsync(" in a land far away");
-                await parser.ProcessChunkAsync("\"}");
-            });
+            var events = CollectEvents(
+                "{\"person\":{\"name\":\"John\",\"age\":30},",
+                "\"characters\":[{\"name\":\"Alice\",\"age\":25},{\"name\":\"Bob\",\"age\":35}],",
+                "\"story\":\"",
+                "Once upon a time",
+                " in a land far away",
+                "\"}"
+            );
 
             // Verify valid JSON structure
             VerifyValidJson(events);
@@ -155,12 +143,9 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestStreamingResponse()
+        public void TestStreamingResponse()
         {
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync("{\"message\":\"Processing\",\"data\":{\"progress\":50}}");
-            });
+            var events = CollectEvents("{\"message\":\"Processing\",\"data\":{\"progress\":50}}");
 
             // Verify valid JSON structure
             VerifyValidJson(events);
@@ -175,15 +160,14 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestInvalidJson()
+        public void TestInvalidJson()
         {
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync("{\"person\":");
-                await parser.ProcessChunkAsync("{invalid}");
-                await parser.ProcessChunkAsync(",\"story\":\"test\",");
-                await parser.ProcessChunkAsync("\"characters\":[]}");
-            });
+            var events = CollectEvents(
+                "{\"person\":",
+                "{invalid}",
+                ",\"story\":\"test\",",
+                "\"characters\":[]}"
+            );
 
             // We don't verify if it's valid or invalid here because we're still getting some 
             // valid events despite the invalid content. The parser should try its best to recover.
@@ -199,12 +183,9 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestNestedComplexObjects()
+        public void TestNestedComplexObjects()
         {
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync("{\"complex\":{\"nested\":{\"deep\":{\"value\":42}}}}");
-            });
+            var events = CollectEvents("{\"complex\":{\"nested\":{\"deep\":{\"value\":42}}}}");
 
             // Verify valid JSON structure
             VerifyValidJson(events);
@@ -218,26 +199,20 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestMalformedJson()
+        public void TestMalformedJson()
         {
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync("{\"name\":\"test\""); // Missing closing brace
-            });
+            var events = CollectEvents("{\"name\":\"test\""); // Missing closing brace
 
             // Verify invalid JSON structure
             VerifyInvalidJson(events);
         }
 
         [TestMethod]
-        public async Task TestLargeNestedStructures()
+        public void TestLargeNestedStructures()
         {
             // This tests our optimized nested structure processing
             var largeArray = "[" + string.Join(",", Enumerable.Range(0, 1000).Select(i => $"{i}")) + "]";
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync($"{{\"largeArray\":{largeArray}}}");
-            });
+            var events = CollectEvents($"{{\"largeArray\":{largeArray}}}");
 
             VerifyValidJson(events);
             var arrayEvent = GetComplexValueEvent(events, "largeArray");
@@ -246,14 +221,13 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestNestedStructuresWithQuotes()
+        public void TestNestedStructuresWithQuotes()
         {
             // Test nested structure with quoted strings containing braces/brackets
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync("{\"nested\":{\"text\":\"This contains { and } and [ and ]\",");
-                await parser.ProcessChunkAsync("\"moreText\":\"\\\"quoted text\\\"\"}}");
-            });
+            var events = CollectEvents(
+                "{\"nested\":{\"text\":\"This contains { and } and [ and ]\",",
+                "\"moreText\":\"\\\"quoted text\\\"\"}}"
+            );
 
             VerifyValidJson(events);
             var nestedEvent = GetComplexValueEvent(events, "nested");
@@ -263,17 +237,12 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestHighlyFragmentedJson()
+        public void TestHighlyFragmentedJson()
         {
             // Test parsing with extreme fragmentation, one character at a time
             var json = "{\"fragmented\":\"test\",\"number\":42}";
-            var events = await CollectEventsAsync(async parser =>
-            {
-                foreach (char c in json)
-                {
-                    await parser.ProcessChunkAsync(c.ToString());
-                }
-            });
+            var chunks = json.Select(c => c.ToString()).ToArray();
+            var events = CollectEvents(chunks);
 
             VerifyValidJson(events);
             string value = GetConcatenatedStringProperty(events, "fragmented");
@@ -284,15 +253,14 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestPrimitiveValueHandling()
+        public void TestPrimitiveValueHandling()
         {
             // Test various primitive values with the new _valueBuffer approach
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync("{\"number\":42,");
-                await parser.ProcessChunkAsync("\"boolean\":true,");
-                await parser.ProcessChunkAsync("\"null\":null}");
-            });
+            var events = CollectEvents(
+                "{\"number\":42,",
+                "\"boolean\":true,",
+                "\"null\":null}"
+            );
 
             VerifyValidJson(events);
             
@@ -305,13 +273,10 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestStringWithEscapedQuotes()
+        public void TestStringWithEscapedQuotes()
         {
             // Test strings with escaped quotes to ensure proper buffer handling
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync("{\"escaped\":\"This has \\\"quotes\\\" inside\"}");
-            });
+            var events = CollectEvents("{\"escaped\":\"This has \\\"quotes\\\" inside\"}");
 
             VerifyValidJson(events);
             string value = GetConcatenatedStringProperty(events, "escaped");
@@ -319,13 +284,10 @@ namespace StructuredStreaming.Tests
         }
 
         [TestMethod]
-        public async Task TestEmptyNestedStructures()
+        public void TestEmptyNestedStructures()
         {
             // Test empty objects and arrays
-            var events = await CollectEventsAsync(async parser =>
-            {
-                await parser.ProcessChunkAsync("{\"emptyObject\":{},\"emptyArray\":[]}");
-            });
+            var events = CollectEvents("{\"emptyObject\":{},\"emptyArray\":[]}");
 
             VerifyValidJson(events);
             

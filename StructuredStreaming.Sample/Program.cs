@@ -33,16 +33,17 @@ namespace AzureOpenAIStreamingDemo
 
             Console.WriteLine("\nStarting to receive streaming response from Azure OpenAI...\n");
 
-            // Create JSON stream parser
-            await using var jsonParser = new JsonStreamParser();
-
-            // Start event processing task
-            var eventProcessingTask = ProcessEventsAsync(jsonParser);
+            // Create JSON stream parser (using synchronous API)
+            var jsonParser = new JsonStreamParser();
+            
+            // Queue to store events for processing
+            var eventQueue = new Queue<JsonStreamEvent>();
 
             // Stream the chat completion
             IAsyncEnumerable<StreamingChatCompletionUpdate> completionUpdates = 
                 client.CompleteChatStreamingAsync(messages);
 
+            string lastStringPropertyName = string.Empty; // Track the last processed string property name
             try
             {
                 await foreach (StreamingChatCompletionUpdate update in completionUpdates)
@@ -52,33 +53,45 @@ namespace AzureOpenAIStreamingDemo
                         string delta = update.ContentUpdate[0].Text;
                         if (!string.IsNullOrEmpty(delta))
                         {
-                            // Process the delta through our custom parser
-                            await jsonParser.ProcessChunkAsync(delta);
+                            // Process the delta through our parser synchronously
+                            var events = jsonParser.ProcessChunk(delta);
+                            
+                            // Queue up events for processing
+                            foreach (var evt in events)
+                            {
+                                eventQueue.Enqueue(evt);
+                            }
+                            
+                            // Process any available events
+                            ProcessEvents(eventQueue, ref lastStringPropertyName);
                         }
                     }
                 }
 
-                // Complete the parsing process
-                await jsonParser.CompleteAsync();
+                // Complete the parsing process and process any final events
+                var finalEvents = jsonParser.Complete();
+                foreach (var evt in finalEvents)
+                {
+                    eventQueue.Enqueue(evt);
+                }
+                ProcessEvents(eventQueue, ref lastStringPropertyName);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error: {ex.Message}");
             }
 
-            // Wait for event processing to complete
-            await eventProcessingTask;
-
             Console.WriteLine("\nStreaming completed.");
             Console.WriteLine("Press any key to exit...");
             Console.ReadKey();
         }
 
-        private static async Task ProcessEventsAsync(JsonStreamParser parser)
-        {
-            string lastStringPropertyName = string.Empty;
-            await foreach (var evt in parser.GetEventsAsync())
+        private static void ProcessEvents(Queue<JsonStreamEvent> eventQueue, ref string lastStringPropertyName)
+        {            
+            while (eventQueue.Count > 0)
             {
+                var evt = eventQueue.Dequeue();
+                
                 switch (evt)
                 {
                     case JsonStringValueEvent stringEvent:
