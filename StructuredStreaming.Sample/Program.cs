@@ -33,8 +33,10 @@ namespace AzureOpenAIStreamingDemo
 
             Console.WriteLine("\nStarting to receive streaming response from Azure OpenAI...\n");
 
-            // Create JSON stream parser (using synchronous API)
-            var jsonParser = new JsonStreamParser();
+            // Create JSON stream parser - you can switch between implementations
+            IJsonStreamParser jsonParser = new Utf8JsonStreamParser();
+            // Alternatively use the character-by-character implementation:
+            // IJsonStreamParser jsonParser = new CharacterByCharacterJsonStreamParser();
             
             // Queue to store events for processing
             var eventQueue = new Queue<JsonStreamEvent>();

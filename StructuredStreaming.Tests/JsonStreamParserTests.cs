@@ -6,15 +6,20 @@ using StructuredStreaming.Core;
 
 namespace StructuredStreaming.Tests
 {
-    [TestClass]
-    public class JsonStreamParserTests
+    /// <summary>
+    /// Base test class that contains common test methods for JSON parsers
+    /// </summary>
+    public abstract class JsonStreamParserTestsBase
     {
+        // Each implementation must provide a parser factory
+        protected abstract IJsonStreamParser CreateParser();
+
         // Helper method to collect events from parser using an array of string chunks
-        private List<JsonStreamEvent> CollectEvents(params string[] chunks)
+        protected List<JsonStreamEvent> CollectEvents(params string[] chunks)
         {
             var events = new List<JsonStreamEvent>();
             
-            using (var parser = new JsonStreamParser())
+            using (var parser = CreateParser())
             {
                 // Process each chunk
                 foreach (var chunk in chunks)
@@ -30,7 +35,7 @@ namespace StructuredStreaming.Tests
         }
 
         // Standard verification methods
-        private void VerifyValidJson(List<JsonStreamEvent> events)
+        protected void VerifyValidJson(List<JsonStreamEvent> events)
         {
             // No error events should be present for valid JSON
             var errors = events.OfType<JsonErrorEvent>().ToList();
@@ -44,7 +49,7 @@ namespace StructuredStreaming.Tests
             Assert.IsTrue(completeEvents[0].IsValidJson, "JSON should be marked as valid");
         }
 
-        private void VerifyInvalidJson(List<JsonStreamEvent> events)
+        protected void VerifyInvalidJson(List<JsonStreamEvent> events)
         {
             // At least one error event should be present for invalid JSON
             var errors = events.OfType<JsonErrorEvent>().ToList();
@@ -58,7 +63,7 @@ namespace StructuredStreaming.Tests
             Assert.IsFalse(completeEvents[0].IsValidJson, "JSON should be marked as invalid");
         }
 
-        private string GetConcatenatedStringProperty(List<JsonStreamEvent> events, string propertyName)
+        protected string GetConcatenatedStringProperty(List<JsonStreamEvent> events, string propertyName)
         {
             return string.Join("", events
                 .OfType<JsonStringValueEvent>()
@@ -66,7 +71,7 @@ namespace StructuredStreaming.Tests
                 .Select(s => s.Chunk));
         }
 
-        private JsonComplexValueEvent GetComplexValueEvent(List<JsonStreamEvent> events, string propertyName)
+        protected JsonComplexValueEvent GetComplexValueEvent(List<JsonStreamEvent> events, string propertyName)
         {
             var evt = events
                 .OfType<JsonComplexValueEvent>()
@@ -300,6 +305,24 @@ namespace StructuredStreaming.Tests
             
             Assert.AreEqual("[]", emptyArr.Value);
             Assert.IsFalse(emptyArr.IsObject);
+        }
+    }
+
+    [TestClass]
+    public class CharacterByCharacterJsonStreamParserTests : JsonStreamParserTestsBase
+    {
+        protected override IJsonStreamParser CreateParser()
+        {
+            return new CharacterByCharacterJsonStreamParser();
+        }
+    }
+
+    [TestClass]
+    public class Utf8JsonStreamParserTests : JsonStreamParserTestsBase
+    {
+        protected override IJsonStreamParser CreateParser()
+        {
+            return new Utf8JsonStreamParser();
         }
     }
 }

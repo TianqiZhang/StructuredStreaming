@@ -1,17 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace StructuredStreaming.Core
 {
     /// <summary>
-    /// A streaming JSON parser that processes input chunks incrementally and emits structured events.
+    /// A character-by-character streaming JSON parser that processes input chunks incrementally and emits structured events.
     /// This parser is designed to handle JSON data arriving in fragments (as it would from a streaming API)
     /// and produce a stream of events representing the parsed JSON structure.
     /// </summary>
-    public class JsonStreamParser : IDisposable
+    public class CharacterByCharacterJsonStreamParser : IJsonStreamParser
     {
         /// <summary>
         /// Represents the current state of the parser in the JSON parsing state machine.
@@ -53,9 +51,9 @@ namespace StructuredStreaming.Core
         private readonly List<JsonStreamEvent> _pendingEvents = new List<JsonStreamEvent>();
 
         /// <summary>
-        /// Initializes a new instance of the JsonStreamParser.
+        /// Initializes a new instance of the CharacterByCharacterJsonStreamParser.
         /// </summary>
-        public JsonStreamParser()
+        public CharacterByCharacterJsonStreamParser()
         {
         }
 
