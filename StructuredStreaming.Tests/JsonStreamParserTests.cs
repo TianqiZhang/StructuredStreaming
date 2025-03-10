@@ -228,5 +228,116 @@ namespace StructuredStreaming.Tests
             // Verify invalid JSON structure
             VerifyInvalidJson(events);
         }
+
+        [TestMethod]
+        public async Task TestLargeNestedStructures()
+        {
+            // This tests our optimized nested structure processing
+            var largeArray = "[" + string.Join(",", Enumerable.Range(0, 1000).Select(i => $"{i}")) + "]";
+            var events = await CollectEventsAsync(async parser =>
+            {
+                await parser.ProcessChunkAsync($"{{\"largeArray\":{largeArray}}}");
+            });
+
+            VerifyValidJson(events);
+            var arrayEvent = GetComplexValueEvent(events, "largeArray");
+            Assert.IsFalse(arrayEvent.IsObject);
+            Assert.IsTrue(arrayEvent.Value.Contains("999"));
+        }
+
+        [TestMethod]
+        public async Task TestNestedStructuresWithQuotes()
+        {
+            // Test nested structure with quoted strings containing braces/brackets
+            var events = await CollectEventsAsync(async parser =>
+            {
+                await parser.ProcessChunkAsync("{\"nested\":{\"text\":\"This contains { and } and [ and ]\",");
+                await parser.ProcessChunkAsync("\"moreText\":\"\\\"quoted text\\\"\"}}");
+            });
+
+            VerifyValidJson(events);
+            var nestedEvent = GetComplexValueEvent(events, "nested");
+            Assert.IsTrue(nestedEvent.IsObject);
+            Assert.IsTrue(nestedEvent.Value.Contains("This contains { and } and [ and ]"));
+            Assert.IsTrue(nestedEvent.Value.Contains("\\\"quoted text\\\""));
+        }
+
+        [TestMethod]
+        public async Task TestHighlyFragmentedJson()
+        {
+            // Test parsing with extreme fragmentation, one character at a time
+            var json = "{\"fragmented\":\"test\",\"number\":42}";
+            var events = await CollectEventsAsync(async parser =>
+            {
+                foreach (char c in json)
+                {
+                    await parser.ProcessChunkAsync(c.ToString());
+                }
+            });
+
+            VerifyValidJson(events);
+            string value = GetConcatenatedStringProperty(events, "fragmented");
+            Assert.AreEqual("test", value);
+            
+            var primitiveEvents = events.OfType<JsonPrimitiveValueEvent>().ToList();
+            Assert.IsTrue(primitiveEvents.Any(p => p.PropertyName == "number" && p.Value == "42"));
+        }
+
+        [TestMethod]
+        public async Task TestPrimitiveValueHandling()
+        {
+            // Test various primitive values with the new _valueBuffer approach
+            var events = await CollectEventsAsync(async parser =>
+            {
+                await parser.ProcessChunkAsync("{\"number\":42,");
+                await parser.ProcessChunkAsync("\"boolean\":true,");
+                await parser.ProcessChunkAsync("\"null\":null}");
+            });
+
+            VerifyValidJson(events);
+            
+            var primitives = events.OfType<JsonPrimitiveValueEvent>().ToList();
+            Assert.AreEqual(3, primitives.Count);
+            
+            Assert.IsTrue(primitives.Any(p => p.PropertyName == "number" && p.Value == "42"));
+            Assert.IsTrue(primitives.Any(p => p.PropertyName == "boolean" && p.Value == "true"));
+            Assert.IsTrue(primitives.Any(p => p.PropertyName == "null" && p.Value == "null"));
+        }
+
+        [TestMethod]
+        public async Task TestStringWithEscapedQuotes()
+        {
+            // Test strings with escaped quotes to ensure proper buffer handling
+            var events = await CollectEventsAsync(async parser =>
+            {
+                await parser.ProcessChunkAsync("{\"escaped\":\"This has \\\"quotes\\\" inside\"}");
+            });
+
+            VerifyValidJson(events);
+            string value = GetConcatenatedStringProperty(events, "escaped");
+            Assert.AreEqual("This has \\\"quotes\\\" inside", value);
+        }
+
+        [TestMethod]
+        public async Task TestEmptyNestedStructures()
+        {
+            // Test empty objects and arrays
+            var events = await CollectEventsAsync(async parser =>
+            {
+                await parser.ProcessChunkAsync("{\"emptyObject\":{},\"emptyArray\":[]}");
+            });
+
+            VerifyValidJson(events);
+            
+            var complexEvents = events.OfType<JsonComplexValueEvent>().ToList();
+            var emptyObj = complexEvents.First(c => c.PropertyName == "emptyObject");
+            var emptyArr = complexEvents.First(c => c.PropertyName == "emptyArray");
+            
+            Assert.AreEqual("{}", emptyObj.Value);
+            Assert.IsTrue(emptyObj.IsObject);
+            
+            Assert.AreEqual("[]", emptyArr.Value);
+            Assert.IsFalse(emptyArr.IsObject);
+        }
     }
 }

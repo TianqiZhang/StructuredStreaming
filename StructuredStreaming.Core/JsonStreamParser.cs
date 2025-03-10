@@ -20,14 +20,13 @@ namespace StructuredStreaming.Core
         private enum ParserState
         {
             WaitingForObjectStart,     // Waiting for the initial '{' character
-            WaitingForPropertyName,    // Expecting a property name or end of object
+            WaitingForProperty,        // Expecting a property name or end of object
             InsidePropertyName,        // Currently reading a property name
             WaitingForColon,           // Expecting the ':' separator after property name
-            WaitingForValueStart,      // Waiting for the beginning of a value
+            WaitingForValue,           // Waiting for the beginning of a value
             InsideStringValue,         // Currently inside a string value
             InsidePrimitiveValue,      // Inside a primitive value (number, boolean, null)
-            InsideNestedStructure,     // Inside a nested object or array
-            WaitingForCommaOrEnd       // Expecting ',' for next property or '}' to end object
+            InsideNestedStructure      // Inside a nested object or array
         }
 
         // Current state of the parser
@@ -36,14 +35,8 @@ namespace StructuredStreaming.Core
         // Buffer for holding incoming data that hasn't been fully processed yet
         private readonly StringBuilder _buffer = new StringBuilder();
         
-        // Buffer for accumulating the current property name being parsed
-        private readonly StringBuilder _currentPropertyName = new StringBuilder();
-        
-        // Buffer for accumulating primitive values
-        private readonly StringBuilder _primitiveValueBuffer = new StringBuilder();
-        
-        // Buffer for accumulating nested JSON structures (objects/arrays)
-        private readonly StringBuilder _nestedStructureBuffer = new StringBuilder();
+        // Multi-purpose buffer for accumulating property names, primitives, etc.
+        private readonly StringBuilder _valueBuffer = new StringBuilder();
         
         // Name of the current property being processed
         private string? _currentProperty = null;
@@ -112,7 +105,7 @@ namespace StructuredStreaming.Core
                             // No terminating quote found; emit entire buffer as one chunk.
                             string safeChunk = _buffer.ToString();
                             _buffer.Clear();
-                            await EmitStringChunkAsync(safeChunk, false, cancellationToken);
+                            await EmitStringValueAsync(safeChunk, false, cancellationToken);
                             break; // Wait for more data.
                         }
                         else
@@ -121,18 +114,23 @@ namespace StructuredStreaming.Core
                             if (termIdx > 0)
                             {
                                 string safeChunk = _buffer.ToString(0, termIdx);
-                                await EmitStringChunkAsync(safeChunk, false, cancellationToken);
+                                await EmitStringValueAsync(safeChunk, false, cancellationToken);
                             }
                             // Remove the emitted text and the terminating quote.
                             _buffer.Remove(0, termIdx + 1);
-                            await EmitEndStringValueAsync(cancellationToken);
-                            _state = ParserState.WaitingForCommaOrEnd;
+                            await EmitStringValueAsync("", true, cancellationToken);
+                            _state = ParserState.WaitingForProperty;
                             continue;
                         }
                     }
+                    else if (_state == ParserState.InsideNestedStructure)
+                    {
+                        // Try to process larger chunks of nested structures at once
+                        await ProcessNestedStructureChunkAsync(cancellationToken);
+                    }
                     else
                     {
-                        // Process one character at a time for non-string states.
+                        // Process one character at a time for other states
                         char c = _buffer[0];
                         _buffer.Remove(0, 1);
                         await ProcessCharacterAsync(c, cancellationToken);
@@ -162,6 +160,71 @@ namespace StructuredStreaming.Core
             return -1;
         }
 
+        // New helper method to process nested structure chunks more efficiently
+        private async Task ProcessNestedStructureChunkAsync(CancellationToken cancellationToken)
+        {
+            bool foundEnd = false;
+            int i = 0;
+            
+            while (i < _buffer.Length && !foundEnd)
+            {
+                char c = _buffer[i++];
+                _valueBuffer.Append(c);
+                
+                if (c == '\\' && _insideString && !_isEscaped)
+                {
+                    _isEscaped = true;
+                }
+                else
+                {
+                    if (c == '"' && !_isEscaped)
+                    {
+                        _insideString = !_insideString;
+                    }
+                    else if (!_insideString)
+                    {
+                        if (c == '{' || c == '[')
+                        {
+                            _nestedStructureStack.Push(c);
+                        }
+                        else if ((c == '}' && _nestedStructureStack.Count > 0 && _nestedStructureStack.Peek() == '{') ||
+                                 (c == ']' && _nestedStructureStack.Count > 0 && _nestedStructureStack.Peek() == '['))
+                        {
+                            _nestedStructureStack.Pop();
+                            
+                            if (_nestedStructureStack.Count == 0)
+                            {
+                                foundEnd = true;
+                            }
+                        }
+                    }
+                    
+                    if (_isEscaped)
+                    {
+                        _isEscaped = false;
+                    }
+                }
+            }
+            
+            // Remove the processed portion from the buffer
+            if (i > 0)
+            {
+                _buffer.Remove(0, i);
+            }
+            
+            // If we found the end of the nested structure, emit it
+            if (foundEnd)
+            {
+                bool isObject = _valueBuffer[0] == '{';
+                await _eventChannel.Writer.WriteAsync(
+                    new JsonComplexValueEvent(_currentProperty, _valueBuffer.ToString(), isObject), 
+                    cancellationToken);
+                
+                _valueBuffer.Clear();
+                _state = ParserState.WaitingForProperty;
+            }
+        }
+
         /// <summary>
         /// Completes the parsing process and signals the end of the JSON stream.
         /// </summary>
@@ -172,11 +235,13 @@ namespace StructuredStreaming.Core
                 // If we're in the middle of parsing, try to emit what we have so far
                 if (_state == ParserState.InsideStringValue && _currentProperty != null)
                 {
-                    await EmitStringChunkAsync("", true, cancellationToken);
+                    await EmitStringValueAsync("", true, cancellationToken);
                 }
                 else if (_state == ParserState.InsidePrimitiveValue && _currentProperty != null)
                 {
-                    await EmitPrimitiveValueAsync(cancellationToken);
+                    await _eventChannel.Writer.WriteAsync(
+                        new JsonPrimitiveValueEvent(_currentProperty, _valueBuffer.ToString()), 
+                        cancellationToken);
                 }
                 
                 // Check if JSON is properly terminated
@@ -218,24 +283,6 @@ namespace StructuredStreaming.Core
         }
 
         /// <summary>
-        /// Finds the first occurrence of a special character (quote or escape) in a string.
-        /// </summary>
-        /// <param name="text">The text to search</param>
-        /// <returns>Index of the first special character, or -1 if none found</returns>
-        private static int FindSpecialCharInString(string text)
-        {
-            for (int i = 0; i < text.Length; i++)
-            {
-                char c = text[i];
-                if (c == '"' || c == '\\')
-                {
-                    return i;
-                }
-            }
-            return -1;
-        }
-
-        /// <summary>
         /// Core parsing logic: processes a single character based on the current parser state.
         /// </summary>
         private async Task ProcessCharacterAsync(char c, CancellationToken cancellationToken = default)
@@ -245,7 +292,7 @@ namespace StructuredStreaming.Core
                 case ParserState.WaitingForObjectStart:
                     if (c == '{')
                     {
-                        _state = ParserState.WaitingForPropertyName;
+                        _state = ParserState.WaitingForProperty;
                     }
                     else if (!char.IsWhiteSpace(c))
                     {
@@ -253,19 +300,22 @@ namespace StructuredStreaming.Core
                     }
                     break;
 
-                case ParserState.WaitingForPropertyName:
+                case ParserState.WaitingForProperty:
                     if (c == '"')
                     {
-                        _currentPropertyName.Clear();
+                        _valueBuffer.Clear();
                         _state = ParserState.InsidePropertyName;
                     }
                     else if (c == '}')
                     {
                         // Root object has ended, transition back to initial state
                         _state = ParserState.WaitingForObjectStart;
-                        // No need to emit EndObjectEvent anymore
                     }
-                    else if (!char.IsWhiteSpace(c))
+                    else if (c == ',' || char.IsWhiteSpace(c))
+                    {
+                        // Ignore commas and whitespace between properties
+                    }
+                    else
                     {
                         await EmitErrorAsync($"Unexpected character: {c}, expected a property name", cancellationToken);
                     }
@@ -274,8 +324,8 @@ namespace StructuredStreaming.Core
                 case ParserState.InsidePropertyName:
                     if (c == '"' && !_isEscaped)
                     {
-                        _currentProperty = _currentPropertyName.ToString();
-                        await EmitPropertyNameAsync(_currentProperty, cancellationToken);
+                        _currentProperty = _valueBuffer.ToString();
+                        _valueBuffer.Clear();
                         _state = ParserState.WaitingForColon;
                     }
                     else if (c == '\\' && !_isEscaped)
@@ -287,14 +337,14 @@ namespace StructuredStreaming.Core
                         if (_isEscaped)
                             _isEscaped = false;
                         
-                        _currentPropertyName.Append(c);
+                        _valueBuffer.Append(c);
                     }
                     break;
 
                 case ParserState.WaitingForColon:
                     if (c == ':')
                     {
-                        _state = ParserState.WaitingForValueStart;
+                        _state = ParserState.WaitingForValue;
                     }
                     else if (!char.IsWhiteSpace(c))
                     {
@@ -302,7 +352,7 @@ namespace StructuredStreaming.Core
                     }
                     break;
 
-                case ParserState.WaitingForValueStart:
+                case ParserState.WaitingForValue:
                     if (c == '"')
                     {
                         _isEscaped = false;
@@ -310,8 +360,8 @@ namespace StructuredStreaming.Core
                     }
                     else if (c == '{' || c == '[')
                     {
-                        _nestedStructureBuffer.Clear();
-                        _nestedStructureBuffer.Append(c);
+                        _valueBuffer.Clear();
+                        _valueBuffer.Append(c);
                         _nestedStructureStack.Clear();
                         _nestedStructureStack.Push(c);
                         _state = ParserState.InsideNestedStructure;
@@ -319,148 +369,47 @@ namespace StructuredStreaming.Core
                     }
                     else if (!char.IsWhiteSpace(c))
                     {
-                        _primitiveValueBuffer.Clear();
-                        _primitiveValueBuffer.Append(c);
+                        _valueBuffer.Clear();
+                        _valueBuffer.Append(c);
                         _state = ParserState.InsidePrimitiveValue;
-                    }
-                    break;
-
-                case ParserState.InsideStringValue:
-                    if (c == '"' && !_isEscaped)
-                    {
-                        await EmitStringValueAsync("", true, cancellationToken);
-                        _state = ParserState.WaitingForCommaOrEnd;
-                    }
-                    else if (c == '\\' && !_isEscaped)
-                    {
-                        _isEscaped = true;
-                    }
-                    else
-                    {
-                        if (_isEscaped)
-                            _isEscaped = false;
-                        
-                        await EmitStringValueAsync(c.ToString(), false, cancellationToken);
                     }
                     break;
 
                 case ParserState.InsidePrimitiveValue:
                     if (c == ',' || c == '}')
                     {
-                        await EmitPrimitiveValueAsync(cancellationToken);
-                        _state = c == ',' ? ParserState.WaitingForPropertyName : ParserState.WaitingForCommaOrEnd;
-                    }
-                    else if (!char.IsWhiteSpace(c))
-                    {
-                        _primitiveValueBuffer.Append(c);
-                    }
-                    break;
-
-                case ParserState.InsideNestedStructure:
-                    _nestedStructureBuffer.Append(c);
-                    
-                    if (c == '\\' && _insideString && !_isEscaped)
-                    {
-                        _isEscaped = true;
-                    }
-                    else
-                    {
-                        if (c == '"' && !_isEscaped)
-                        {
-                            _insideString = !_insideString;
-                        }
-                        else if (!_insideString)
-                        {
-                            if (c == '{' || c == '[')
-                            {
-                                _nestedStructureStack.Push(c);
-                            }
-                            else if ((c == '}' && _nestedStructureStack.Count > 0 && _nestedStructureStack.Peek() == '{') ||
-                                     (c == ']' && _nestedStructureStack.Count > 0 && _nestedStructureStack.Peek() == '['))
-                            {
-                                _nestedStructureStack.Pop();
-                                
-                                if (_nestedStructureStack.Count == 0)
-                                {
-                                    await EmitComplexValueAsync(_nestedStructureBuffer.ToString(), cancellationToken);
-                                    _state = ParserState.WaitingForCommaOrEnd;
-                                }
-                            }
-                        }
+                        await _eventChannel.Writer.WriteAsync(
+                            new JsonPrimitiveValueEvent(_currentProperty, _valueBuffer.ToString()), 
+                            cancellationToken);
                         
-                        if (_isEscaped)
+                        _valueBuffer.Clear();
+                        _state = ParserState.WaitingForProperty;
+                        
+                        // If we hit the end of object, put the '}' back to be processed in WaitingForProperty state
+                        if (c == '}')
                         {
-                            _isEscaped = false;
+                            _buffer.Insert(0, c);
                         }
-                    }
-                    break;
-
-                case ParserState.WaitingForCommaOrEnd:
-                    if (c == ',')
-                    {
-                        _state = ParserState.WaitingForPropertyName;
-                    }
-                    else if (c == '}')
-                    {
-                        // Root object has ended, transition back to initial state
-                        _state = ParserState.WaitingForObjectStart;
-                        // No need to emit EndObjectEvent anymore
                     }
                     else if (!char.IsWhiteSpace(c))
                     {
-                        await EmitErrorAsync($"Unexpected character: {c}, expected ',' or '}}'", cancellationToken);
+                        _valueBuffer.Append(c);
                     }
                     break;
             }
         }
 
+        // Simplified string value emission
         private async Task EmitStringValueAsync(string chunk, bool isFinal, CancellationToken cancellationToken)
         {
-            await _eventChannel.Writer.WriteAsync(new JsonStringValueEvent(_currentProperty, chunk, isFinal), cancellationToken);
-        }
-
-        private async Task EmitPrimitiveValueAsync(CancellationToken cancellationToken)
-        {
-            await _eventChannel.Writer.WriteAsync(new JsonPrimitiveValueEvent(_currentProperty, _primitiveValueBuffer.ToString()), cancellationToken);
-        }
-
-        private async Task EmitComplexValueAsync(string value, CancellationToken cancellationToken)
-        {
-            bool isObject = value.StartsWith("{");
-            await _eventChannel.Writer.WriteAsync(new JsonComplexValueEvent(_currentProperty, value, isObject), cancellationToken);
-        }
-
-        private async Task EmitPropertyNameAsync(string propertyName, CancellationToken cancellationToken)
-        {
-            // Store the property name but don't emit a separate event
-            _currentProperty = propertyName;
-        }
-
-        private Task EmitEndObjectAsync(CancellationToken cancellationToken)
-        {
-            return Task.CompletedTask; // No-op
+            await _eventChannel.Writer.WriteAsync(
+                new JsonStringValueEvent(_currentProperty, chunk, isFinal), 
+                cancellationToken);
         }
 
         private async Task EmitErrorAsync(string message, CancellationToken cancellationToken)
         {
             await _eventChannel.Writer.WriteAsync(new JsonErrorEvent(message), cancellationToken);
         }
-
-        // Replace the old emit methods with the new ones
-        // These are just for compatibility with existing code
-        private Task EmitStringChunkAsync(string chunk, bool isFinal, CancellationToken cancellationToken)
-            => EmitStringValueAsync(chunk, isFinal, cancellationToken);
-
-        private Task EmitStartStringValueAsync(CancellationToken cancellationToken)
-            => Task.CompletedTask; // No-op as we don't need this event anymore
-
-        private Task EmitEndStringValueAsync(CancellationToken cancellationToken)
-            => EmitStringValueAsync("", true, cancellationToken);
-
-        private Task EmitStartComplexValueAsync(char c, CancellationToken cancellationToken)
-            => Task.CompletedTask; // No-op as we don't need this event anymore
-
-        private Task EmitEndComplexValueAsync(string value, CancellationToken cancellationToken)
-            => EmitComplexValueAsync(value, cancellationToken);
     }
 }
