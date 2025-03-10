@@ -1,4 +1,4 @@
-﻿using Azure.AI.OpenAI;
+using Azure.AI.OpenAI;
 using OpenAI;
 using OpenAI.Chat;
 using System;
@@ -13,7 +13,7 @@ namespace AzureOpenAIStreamingDemo
         {
             // Initialize the client for Azure OpenAI
             string apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY") ?? "your-azure-api-key";
-            string endpoint = "https://yours.openai.azure.com/";
+            string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? "https://yours.openai.azure.com/";
             string deploymentName = "gpt-4o"; // e.g., "gpt-4o" or your custom deployment
 
             // Configure client options for Azure OpenAI

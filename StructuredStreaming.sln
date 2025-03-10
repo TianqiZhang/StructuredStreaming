@@ -2,11 +2,11 @@
 # Visual Studio Version 17
 VisualStudioVersion = 17.5.2.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StructuredStreaming", "StructuredStreaming\StructuredStreaming.csproj", "{E88EDFF1-B4C1-8537-1198-97AB0F52AA27}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StructuredStreaming.Tests", "StructuredStreaming.Tests\StructuredStreaming.Tests.csproj", "{C88EDFF1-B4C1-8537-1198-97AB0F52AA28}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StructuredStreaming.Core", "StructuredStreaming.Core\StructuredStreaming.Core.csproj", "{AF14A20E-8143-4C1A-99C4-B70C9DC83D83}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StructuredStreaming.Sample", "StructuredStreaming.Sample\StructuredStreaming.Sample.csproj", "{B1E8577B-65AF-4E59-BF80-3908FD057FAD}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -14,10 +14,6 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{E88EDFF1-B4C1-8537-1198-97AB0F52AA27}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{E88EDFF1-B4C1-8537-1198-97AB0F52AA27}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{E88EDFF1-B4C1-8537-1198-97AB0F52AA27}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{E88EDFF1-B4C1-8537-1198-97AB0F52AA27}.Release|Any CPU.Build.0 = Release|Any CPU
 		{C88EDFF1-B4C1-8537-1198-97AB0F52AA28}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{C88EDFF1-B4C1-8537-1198-97AB0F52AA28}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C88EDFF1-B4C1-8537-1198-97AB0F52AA28}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -26,6 +22,10 @@ Global
 		{AF14A20E-8143-4C1A-99C4-B70C9DC83D83}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{AF14A20E-8143-4C1A-99C4-B70C9DC83D83}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{AF14A20E-8143-4C1A-99C4-B70C9DC83D83}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B1E8577B-65AF-4E59-BF80-3908FD057FAD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B1E8577B-65AF-4E59-BF80-3908FD057FAD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B1E8577B-65AF-4E59-BF80-3908FD057FAD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B1E8577B-65AF-4E59-BF80-3908FD057FAD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
