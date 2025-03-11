@@ -23,7 +23,7 @@ namespace AzureOpenAIStreamingDemo
             // Define the custom prompt to generate a large JSON object
             string customPrompt = @"Generate a JSON object with the following fields:
                 - 'person': a object with two fields: 'name' (string) and 'city' (string),
-                - 'story': a very long string (at least 200 words) describing a person's life story. Do not use markdown format, start with '{' directly.,
+                - 'story': a very long string (at least 200 words) describing a person's life story. Do not use markdown format.,
                 - 'characters': an array of objects, each object has two fields: 'name' (string) and 'age' (number).";
 
             var messages = new ChatMessage[]
@@ -33,15 +33,53 @@ namespace AzureOpenAIStreamingDemo
 
             Console.WriteLine("\nStarting to receive streaming response from Azure OpenAI...\n");
 
-            // Create JSON stream parser (using synchronous API)
+            // Define JSON schema for structured output
+            ChatCompletionOptions options = new()
+            {
+                ResponseFormat = ChatResponseFormat.CreateJsonSchemaFormat(
+                    jsonSchemaFormatName: "person_story_format",
+                    jsonSchema: BinaryData.FromBytes("""
+                        {
+                          "type": "object",
+                          "properties": {
+                            "person": {
+                              "type": "object",
+                              "properties": {
+                                "name": { "type": "string" },
+                                "city": { "type": "string" }
+                              },
+                              "required": ["name", "city"],
+                              "additionalProperties": false
+                            },
+                            "story": { "type": "string" },
+                            "characters": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": { "type": "string" },
+                                  "age": { "type": "number" }
+                                },
+                                "required": ["name", "age"],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": ["person", "story", "characters"],
+                          "additionalProperties": false
+                        }
+                        """u8.ToArray()),
+                    jsonSchemaIsStrict: true)
+            };
+
             var jsonParser = new JsonStreamParser();
             
             // Queue to store events for processing
             var eventQueue = new Queue<JsonStreamEvent>();
 
-            // Stream the chat completion
+            // Stream the chat completion with options for structured output
             IAsyncEnumerable<StreamingChatCompletionUpdate> completionUpdates = 
-                client.CompleteChatStreamingAsync(messages);
+                client.CompleteChatStreamingAsync(messages, options);
 
             string lastStringPropertyName = string.Empty; // Track the last processed string property name
             try
